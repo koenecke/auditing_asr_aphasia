@@ -1,0 +1,367 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+###load library
+library(tidyverse)
+library(ggplot2)
+library(readxl)
+library(correlation)
+library(corrplot)
+library(stringr)
+library(cobalt)
+library(zip)
+library(MatchIt)
+library(gridExtra)
+library(stargazer)
+library(knitr)
+library(kableExtra)
+```
+
+```{r}
+aphasia_demo_filepath = "../../data/Demographic/aphasia-demo.xlsx"
+control_demo_filepath = "../../data/Demographic/control-demo.xlsx"
+
+aphasia_wab_score_filepath = "../../data/Demographic/aphasia_severity_data.xlsx"
+
+
+non_vocal_duration_filepath = "../../data/2024_01_10_merged_nonvocal_durations.csv"
+
+audio_volumen_level_filepath = "../../data/Demographic/volume_levels.csv"
+
+aphasia_noise_level_filepath = "../../data/Demographic/aphasia_noiselevel.csv"
+control_noise_level_filepath ="../../data/Demographic/control_noiselevel.csv"
+
+unzip("../../data/2025-04-04_WER_Results.zip",exdir = "../../data")
+wer_results_filepath = "../../data/2025-04-04_WER_Results.csv"
+
+hallucination_df <- read_csv("../../data/hallucination_check_category.csv")
+```
+
+
+# Data Processing
+## Preprocess demographic data 
+```{r message=FALSE}
+# select variables
+#`Age at Testing`, Gender, OTH, `Language Status`, `Primary Language`,
+# `Years of Education`, `Employment  Status`, `Adequate Vision`, `Adequate Hearing`
+
+aphasia_demo <- read_xlsx(aphasia_demo_filepath)
+
+control_demo <- read_xlsx(control_demo_filepath) 
+
+control_demo1 <- control_demo %>% 
+  filter(!is.na(`Participant ID`)) %>% 
+  dplyr::select(`Participant ID`,`Age at Testing`,Gender, Race, `Language Status`, `Primary Language`,`Years of Education`, `Employment  Status`, `Vision Adequate for Testing`,`Hearing Adequate for Testing`) %>% rename(`Adequate Vision` = `Vision Adequate for Testing`,
+         `Adequate Hearing` = `Hearing Adequate for Testing`) %>% 
+  mutate(`Aphasia Duration`= 0,
+         `Aphasia Category -- Clin Impression`="None",
+         `Aphasia Type --Clin Impression -- Boston` ="None",
+         Group = "control")
+                                          
+aphasia_demo1 <- aphasia_demo %>% 
+  dplyr:: select(`Participant ID`,`Age at Testing`,Gender,Race,`Primary Language`,`Language Status`,`Years of Education`,`Employment  Status`,`Adequate Vision`,`Adequate Hearing`,`Aphasia Duration`,`Aphasia Category -- Clin Impression`, `Aphasia Type --Clin Impression -- Boston`) %>% 
+    mutate(Group = "aphasia")
+
+
+# list age groups for categorization
+age_groups <- c(0,10,20,30,40,50,60,70,80,Inf)
+
+age_group_labels <- c("0-10", "10s", "20s","30s","40s","50s","60s","70s","Over 80")
+
+# list education levels for categorization 
+edu_groups <- c(0,12,15,16,Inf)
+edu_group_labels<- c("<= High School Degree","2-year College or dropped Out of 4-year College","4-year college","Post-grad Degree")
+# merge demo and process variables data for analysis
+demo_data <- rbind(aphasia_demo1,control_demo1) %>% 
+  mutate_all(~ifelse(. == "U", NA, .)) %>% 
+  mutate(`Participant ID` = str_to_lower(`Participant ID`),
+         `Age at Testing` =  round(as.numeric(`Age at Testing`)),
+         `Years of Education`=round(as.numeric(`Years of Education`))) %>% 
+    relocate(Group,.after=`Participant ID`) %>% 
+    filter(!is.na(`Participant ID`))
+
+
+#read in aphasia wab score data 
+aphasia_score_info <- read_xlsx(aphasia_wab_score_filepath,sheet = "Time 1") %>% dplyr::select(1,3) %>% na.omit()
+colnames(aphasia_score_info)[2] <-"aphasia_wab_score"
+aphasia_score_info <- aphasia_score_info %>% 
+  mutate(aphasia_wab_score = ifelse(aphasia_wab_score =="U",NA,aphasia_wab_score)) %>% 
+  mutate(aphasia_wab_score = round(as.numeric(aphasia_wab_score),digits = 2),
+         `Participant ID` =  str_to_lower(`Participant ID`)) %>% # REMOVE THE NA rows
+  na.omit()
+
+# add in aphasia score 
+demo_data<- demo_data %>% 
+  left_join(aphasia_score_info,by ="Participant ID") %>% 
+  mutate(aphasia_wab_score=ifelse(is.na(aphasia_wab_score),100,aphasia_wab_score))
+
+# Check NAs 
+NA_data <- demo_data %>% filter(is.na(`Participant ID`)==FALSE)%>% summarise(across(everything(), ~sum(is.na(.))))
+
+
+```
+
+## Preprocess duration data 
+```{r message=FALSE}
+## load in snippets duration data
+duration_info1 <- read_csv(file="../../data/Ground_Truth_Transcript/aphasia_nounk_over3_2024-03-07.csv") %>%  dplyr::select(segment_name,duration) 
+duration_info2 <- read_csv(file="../../data/Ground_Truth_Transcript/control_nounk_over3_2024-03-07.csv") %>%  dplyr::select(segment_name,duration)
+duration_info <- rbind(duration_info1,duration_info2) %>% mutate(total_audio_duration = duration/1000) %>%  dplyr::select(-duration) # change miliseconds to seconds
+
+# categorize snippets duration 
+duration_groups <- c(5,10,15,20,25,30,35,40,45,50,55,60,65,70,Inf)
+duration_group_labels <- c("5-10 seconds","10-15 seconds","15-20 seconds","20-25 seconds","25-30 seconds","30-35 seconds","35-40 seconds","40-45 seconds","45-50 seconds","50-55 seconds","55-60 seconds","60-65 seconds","65-70 seconds","Above 70 seconds")
+duration_info <- duration_info %>%  
+  mutate(total_audio_duration_group = cut(total_audio_duration, breaks = duration_groups, labels = duration_group_labels, include.lowest = TRUE)) 
+
+# read in nonvocal duration data for each snippet
+nonvocal_duration_df<- read_csv(non_vocal_duration_filepath)
+# nonvocal_duration_data <- read_csv(file.choose()) %>% select(-group)
+nonvocal_duration_data <- nonvocal_duration_df%>%
+  # select(-group) %>% 
+  mutate(nonvocal_audio_duration = nonvocal_silero/1000) %>%
+   dplyr::select(filename,nonvocal_audio_duration,group)
+
+
+
+all_duration_data <- duration_info %>% left_join(nonvocal_duration_data,by =c("segment_name"="filename")) %>%  dplyr::select(segment_name,total_audio_duration,nonvocal_audio_duration,everything()) %>% mutate(non_vocal_percentage = nonvocal_audio_duration/total_audio_duration) 
+
+
+# calculate average duration for each group 
+all_duration_data %>% group_by(group) %>% summarise(mean(total_audio_duration),sd(total_audio_duration))
+
+# all_duration_data 
+all_duration_data <- all_duration_data %>%  dplyr::select(-group)
+
+
+# snippet volume data
+volume_data <- read_csv(audio_volumen_level_filepath) 
+colnames(volume_data)[1]<-"segment_name"
+
+```
+
+
+## Preprocess noise level data
+```{r}
+## load in noise level data and overall audio level data
+aphasia_noise_df <- read_csv(aphasia_noise_level_filepath)
+control_noise_df <- read_csv(control_noise_level_filepath)
+noise_info <-rbind(aphasia_noise_df,control_noise_df) %>% 
+  mutate(`Mean Background Noise`= ifelse(is.na(`Mean Background Noise`),0,`Mean Background Noise`))
+colnames(noise_info) <-c("segment_name","Mean_Background_Noise") 
+##  Scale Mean Background Noise level by 100
+noise_info$Mean_Background_Noise <- noise_info$Mean_Background_Noise*100
+
+noise_groups <- c(0,0.125,0.25,0.375,0.5,0.75,1)
+noise_groups_label <- c("0-0.125","0.125-0.25","0.25-0.375","0.375-0.5","0.5-0.75","0.75-1")
+noise_info <- noise_info %>% 
+  mutate(Mean_Background_Noise_Levels = cut(Mean_Background_Noise,
+                                            breaks = noise_groups,
+                                            labels = noise_groups_label,
+                                            include.lowest = TRUE),
+         Mean_Background_Noise_Levels = as.factor(Mean_Background_Noise_Levels))
+
+
+```
+
+## Process hallucination data
+```{r}
+
+# obtain the data that were checked for hallucination
+hallucination_data <- hallucination_df %>% filter(!is.na(Whisper_hallucination)) %>% select(segment_name, Whisper_hallucination,Whisper_hallucination_category)
+
+# check counts of hallucination per group 
+hallucination_df %>% filter(!is.na(Whisper_hallucination)) %>% select(segment_name, Whisper_hallucination,Group) %>% group_by(Group,Whisper_hallucination) %>% count()
+
+```
+
+
+
+## Filtering Interviewer Speech and Count Files 
+```{r}
+
+pre_tagging_wer_results<- read_csv("../../data/2025-04-04_WER_Results.csv") %>%  dplyr::select(-c(1,duration)) %>%  rename(groundtruth= original_groundtruth) 
+post_tagging_filenames <- read_csv("../../data/2023-12-23_post_interviewer_tagging_WER.csv") %>%  dplyr::select(filename,Group) %>% rename(segment_name=filename)
+
+
+
+# filter out additional files that were found to have inaccurate ground truth 
+file_list <- c(
+  "UNH1054_230938_259067.wav",
+  "NEURAL18-2_761834_810626.wav",
+  "kurland14b_161500_195085.wav",
+  "kurland18a_1487149_1544774.wav",
+  "wright50a_16440_34891.wav",
+  "capilouto29a_300163_402464.wav",
+  "williamson23a_38394_43337.wav",
+  "MMA10a_71461_76141.wav",
+  "kurland02a_842915_848511.wav",
+  "UNH01a_1476498_1482103.wav",
+  "fridriksson12a_252849_267112.wav",
+  "kempler01a_332450_336790.wav",
+  "williamson15a_28092_51234.wav"
+)
+
+
+post_tagging_wer_results <- post_tagging_filenames %>% left_join(pre_tagging_wer_results,by = c("Group","segment_name")) %>% mutate( Participant_ID = map_chr(str_split(segment_name, "_"), 1) %>% str_to_lower()) %>%  dplyr::select(segment_name,Participant_ID,Group,everything()) %>% 
+  filter(!segment_name %in% file_list)
+
+### Count of Participants and Files after tagging interviewer speech
+pre_tagging_files <- pre_tagging_wer_results %>% dplyr::select(Group,segment_name) %>% unique() %>% count(Group, name = "# Snippets (Pre-tagging) ") 
+pre_tagging_participants <- pre_tagging_wer_results  %>% mutate( Participant_ID = map_chr(str_split(segment_name, "_"), 1) %>% str_to_lower())%>%  dplyr::select(Participant_ID,Group) %>% unique() %>% count(Group, name = "# Participants (Pre-tagging) ")
+
+# after filtering interviewer speech how many people we have for each group?
+post_tagging_files <- post_tagging_wer_results %>%  dplyr::select(Group,segment_name) %>% unique() %>% group_by(Group) %>% count(name="# Snippets (Post-tagging)")
+post_tagging_participants <- post_tagging_wer_results %>% mutate( Participant_ID = map_chr(str_split(segment_name, "_"), 1) %>% str_to_lower()) %>%  dplyr::select(Participant_ID,Group) %>% unique() %>% count(Group, name = "# Participants (Post-tagging) ") 
+
+# merge and display data
+pre_post_tagging_participants <- pre_tagging_participants %>% left_join(post_tagging_participants,by = "Group")
+pre_post_tagging_participants%>%  kbl(caption="Change in Total Number of Participants after Tagging Interviewer Speech") %>%  kable_material(c("striped", "hover","condensed","responsive"))
+pre_post_tagging_files <- pre_tagging_files%>% left_join(post_tagging_files,by = "Group")
+pre_post_tagging_files%>%  kbl(caption="Change in Total Number of Snippets after Tagging Interviewer Speech") %>% kable_material(c("striped", "hover","condensed","responsive"))
+```
+
+# Merge Demographic data and Snippets Data with WER results
+```{r}
+
+merged_data <- post_tagging_wer_results %>% 
+    left_join(all_duration_data,by="segment_name") %>% 
+    left_join(noise_info,by="segment_name") %>% 
+    left_join(volume_data,by=c("segment_name",
+                              "Group"="group")) %>% 
+   left_join(hallucination_data,by="segment_name") %>%  mutate(Whisper_hallucination = ifelse(is.na(Whisper_hallucination), 0, Whisper_hallucination)) %>% 
+     left_join(demo_data,by=c("Participant_ID"="Participant ID","Group"))
+  
+merged_processed_data <- merged_data  %>% 
+    mutate(Duration_Type= ifelse(total_audio_duration<2,"<2 seconds",">=2 seconds")) %>%  
+    filter(total_audio_duration>=2) %>% 
+    mutate( # track word count for the version that removes fillers
+          word_count_RF = str_count(groundtruth_RF, "\\S+") ,
+          word_count_RFF = str_count(`groundtruth_RFF`, "\\S+") ,
+          word_count_RFFR = str_count(groundtruth_RFFR, "\\S+") ,
+          word_count_RFFRR = str_count(groundtruth_RFFRR, "\\S+")) %>% 
+    filter(word_count_RF>=4) # select files that have more than three words in the version of ground truth that removes fillers
+
+
+post_demo_filter_data <- merged_processed_data %>%
+  filter(!is.na(`Age at Testing`) &
+           !is.na(`Years of Education`) & 
+           !is.na(Race) & 
+           !is.na(`Primary Language`) & 
+           !is.na(Gender) & 
+           !is.na(Mean_Background_Noise) ) %>%
+  filter(`Primary Language` %in% c("eng","English")) %>% # restrict sample to speakers that have English as first language due to the lack of speakers that have other language as first language
+  filter(Race %in% c("AA","AS","HL","WH","OTH")) %>% 
+  # restrict sample to speakers only in these four race because these are the ones present across both groups %>% 
+  filter(!Participant_ID=="wright20a")  # remove participant wright20a because intelligiblity
+colnames(post_demo_filter_data)
+
+```
+
+# Count files post filtering
+```{r}
+# Total number of files per group after filtering is
+post_demo_filter_data %>% 
+  dplyr::select(segment_name,Group) %>% 
+  unique() %>% 
+  group_by(Group) %>% 
+  count()
+
+#Total number of participants per group after filtering is
+post_demo_filter_data %>% 
+  dplyr::select(Participant_ID,Group) %>% 
+  unique() %>% 
+  group_by(Group) %>% 
+  count()
+```
+
+# Count hallucination post filtering
+```{r}
+post_demo_filter_data  %>%  select(segment_name, Whisper_hallucination,Group) %>% unique() %>% group_by(Group,Whisper_hallucination) %>% count() 
+
+# hallucination_post_filter <- hallucination_data %>% filter(segment_name %in% post_demo_filter_data$segment_name) 
+# write_csv(hallucination_post_filter,"hallucination_post_filter.csv")
+
+```
+
+
+# Save to file 
+```{r}
+
+current_direct<- getwd()
+setwd("../../data")
+write_csv(post_demo_filter_data,"Merged_WER_data_raw.csv")
+
+colnames(post_demo_filter_data)
+```
+
+#Identify number of files that ASR failed to transcribe 
+```{r echo=FALSE}
+asr_list<-c("AWS_orig","AssemblyAI_orig","GoogleChirp_orig","Azure_orig","Whisper_orig","RevAI_orig")
+merged_processed_data %>%
+   dplyr::select(segment_name,asr_list,total_audio_duration,Group) %>%
+  pivot_longer(cols = asr_list,names_to = "ASR",values_to = "Transcript") %>%
+  mutate(is_NA = ifelse(is.na(Transcript),1,0)) %>%
+  group_by(ASR,is_NA,Group) %>%
+  count() %>% pivot_wider(names_from = is_NA,values_from = n) %>% kbl(caption ="Transcription Result for Audio Snippets",col.names = c("ASR","Group","Transcribed","Not Transcribed")) %>% kable_material(c("striped", "hover","condensed","responsive"))
+
+```
+
+### Count of Participants Per demographic (Post filtering)
+```{r}
+post_filtering_snippets <- post_demo_filter_data %>%  dplyr::select(Group,segment_name) %>% unique() %>% count(Group, name = "# Snippets (Post-filtering)") 
+post_filtering_participants <- post_demo_filter_data %>% dplyr::select(Group,Participant_ID) %>% unique() %>%  count(Group, name = "# Participants (Post-filtering)") 
+# merge and display data
+pre_post_filtering_participants <- pre_post_tagging_participants %>% left_join(post_filtering_participants)
+pre_post_filtering_participants%>%  kbl(caption="Change in Total Number of Snippets after Filtering by Demographics") %>%  kable_material(c("striped", "hover","condensed","responsive"))
+pre_post_filtering_files <- pre_post_tagging_files %>% left_join(post_filtering_snippets,by = "Group")
+pre_post_filtering_files%>%  kbl(caption="Change in Total Number of Snippets after Filtering by Demographics") %>% kable_material(c("striped", "hover","condensed","responsive")) 
+```
+
+```{r}
+pre_tagging_data<- pre_tagging_wer_results %>% mutate( Participant_ID = map_chr(str_split(segment_name, "_"), 1) %>% str_to_lower()) %>% 
+    left_join(all_duration_data,by="segment_name") %>% 
+    left_join(noise_info,by="segment_name") %>% 
+    left_join(demo_data,by=c("Participant_ID"="Participant ID","Group")) %>% 
+    mutate(Duration_Type= ifelse(total_audio_duration<2,"<2 seconds",">=2 seconds")) %>%  filter(Duration_Type==">=2 seconds") %>% filter(total_audio_duration>=2) 
+
+t1 <- pre_tagging_data %>% group_by(Group) %>% summarise(avg_duration = round(mean(total_audio_duration),digits = 2),sd_duration= round(sd(total_audio_duration),digits=2)) %>% mutate(Data = "Pre_tagging_interviewer",.before = avg_duration)
+t2<-pre_tagging_data %>% filter(Group=="aphasia") %>%  dplyr::select(Participant_ID,aphasia_wab_score) %>% unique() %>% filter(!is.na(aphasia_wab_score)) %>% summarise(avg_wab_score = round(mean(aphasia_wab_score),digits=2), sd_wab_score=round(sd(aphasia_wab_score),digits=2)) %>% mutate(Data = "Pre_tagging_interviewer",.before = avg_wab_score)
+t<- t1 %>% left_join(t2,by="Data")
+
+
+post_tagging_data <- post_tagging_wer_results %>% mutate( Participant_ID = map_chr(str_split(segment_name, "_"), 1) %>% str_to_lower()) %>% 
+    left_join(all_duration_data,by="segment_name") %>% 
+    left_join(noise_info,by="segment_name") %>% 
+    left_join(demo_data,by=c("Participant_ID"="Participant ID","Group")) %>% 
+    mutate(Duration_Type= ifelse(total_audio_duration<2,"<2 seconds",">=2 seconds")) %>%  filter(Duration_Type==">=2 seconds") %>% filter(total_audio_duration>=2) 
+
+post_tagging_t1 <- pre_tagging_data %>% group_by(Group) %>% summarise(avg_duration = mean(total_audio_duration),sd_duration= sd(total_audio_duration)) %>% mutate(Data = "Post_tagging_interviewer",.before = avg_duration)
+post_tagging_t2<-pre_tagging_data %>% filter(Group=="aphasia") %>%  dplyr::select(Participant_ID,aphasia_wab_score) %>% unique() %>% filter(!is.na(aphasia_wab_score)) %>% summarise(avg_wab_score = mean(aphasia_wab_score), sd_wab_score=sd(aphasia_wab_score)) %>% mutate(Data = "Post_tagging_interviewer",.before = avg_wab_score)
+post_tagging_t<- post_tagging_t1%>% left_join(post_tagging_t2,by="Data")
+
+
+
+#post filtering data 
+new_t1<-merged_data%>% group_by(Group) %>% summarise(avg_duration = mean(total_audio_duration),sd_duration= sd(total_audio_duration)) %>% mutate(Data = "Post_filtering",.before = avg_duration)
+new_t2<-merged_data %>% filter(Group=="aphasia") %>%  dplyr::select(Participant_ID,aphasia_wab_score) %>% unique() %>% filter(!is.na(aphasia_wab_score)) %>% summarise(avg_wab_score = mean(aphasia_wab_score), sd_wab_score=sd(aphasia_wab_score)) %>% mutate(Data = "Post_filtering",.before = avg_wab_score)
+
+new_t<- new_t1 %>% left_join(new_t2,by="Data")
+
+
+merged_t <- rbind(t1,post_tagging_t1,new_t1)
+
+merged_t %>% kable()%>% kable_material(c("striped", "hover","condensed","responsive"))
+
+
+merged_t2<- rbind(t2,post_tagging_t2,new_t2)
+
+merged_t2 %>% kable()%>% kable_material(c("striped", "hover","condensed","responsive"))
+
+```
+
+
+

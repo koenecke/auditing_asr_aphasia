@@ -1,0 +1,295 @@
+This file produces figures and statistics for the weighted average comparison among different aphasia types. To use matched data set, set matched to TRUE or else FALSE for full dataset.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+# Load WER data 
+
+##Weighted Average (Results on Standardization Section)
+```{r}
+df1 <- read_csv("../../data/weighted_average_WER_by_group_matched.csv") %>% mutate(Matching = "Matched")
+df2 <- read_csv("../../data/weighted_average_WER_by_group_unmatched.csv") %>% mutate(Matching="Unmatched")
+
+full_df<- rbind(df1,df2) %>% mutate(Group = ifelse(Group %in% c("None","control"),"Control",Group),
+                       
+                        ASR = case_when(ASR =="AWS"~"Amazon AWS",
+                         ASR =="GoogleChirp"~"Google Chirp",
+                         ASR =="Whisper"~"OpenAI Whisper",
+                         ASR =="RevAI"~"Rev AI",
+                         ASR =="Azure"~"Microsoft Azure",
+                         ASR =="AssemblyAI"~"AssemblyAI"))
+
+
+```
+##Weighted WER table 
+```{r}
+weighted_wer_table <- full_df %>% filter(weighted_average_group=="aphasia_type") %>% 
+  dplyr::select(ASR,Group,`Weighted WER`,Matching) %>% 
+  pivot_wider(names_from = Group,values_from =`Weighted WER`)  %>% 
+  arrange(Matching, -aphasia) %>% 
+  mutate(Aphasia_Control_diff = aphasia-Control,
+          Average_Version = "Weighted") %>% 
+  mutate(across(where(is.numeric), round, 2)) 
+```
+
+# Set dataset 
+```{r}
+# change this based on which dataset to use
+matched <-TRUE
+
+# set dataset based on matching or not
+if (matched){
+  weighted_avg_wer <- full_df %>% filter(Matching=="Matched")
+} else{
+  weighted_avg_wer <- full_df %>% filter(Matching=="Unmatched")
+  }
+
+weighted_avg_wer <- weighted_avg_wer %>% 
+  rename("mean_wer"="Weighted WER")
+
+weighted_avg_wer$ASR<- factor(weighted_avg_wer$ASR,levels = c("Google Chirp","Microsoft Azure","OpenAI Whisper","Rev AI","AssemblyAI","Amazon AWS"))
+```
+
+
+# Figure S1
+```{r}
+
+if (matched==TRUE){
+  this_filename = "./figures/wer_overall_matched_weighted.pdf"
+} else{
+  this_filename = "./figures/wer_overall_unmatched_weighted.pdf"
+}
+
+this_data_main <- weighted_avg_wer %>% filter(weighted_average_group=="aphasia_type")
+
+#Table for WER for ASR in Figure 1 
+final_wer <- this_data_main %>% 
+  mutate(mean_wer = round(mean_wer*100,digits=2)) %>% 
+  dplyr::select(Group,mean_wer,ASR) %>% 
+  pivot_wider(values_from = mean_wer, names_from = Group) %>% 
+  mutate(Aphasia_Control_diff = aphasia-Control) %>% 
+  arrange(-aphasia) 
+  
+
+print(paste("The average difference is ", mean(final_wer$Aphasia_Control_diff)))
+print(paste("The average WER on the aphasia group were",
+             final_wer$aphasia[1],",",
+            final_wer$aphasia[2],",",
+            final_wer$aphasia[3],",",
+            final_wer$aphasia[4],",",
+            final_wer$aphasia[5],",",
+            final_wer$aphasia[6],",",
+            "for" ,
+             final_wer$ASR[1], ",",
+             final_wer$ASR[2], ",",
+             final_wer$ASR[3], ",",
+             final_wer$ASR[4], ",",
+             final_wer$ASR[5], ",",
+             final_wer$ASR[6]))
+
+print(paste("The WER diff were",
+             final_wer$Aphasia_Control_diff[1],",",
+            final_wer$Aphasia_Control_diff[2],",",
+            final_wer$Aphasia_Control_diff[3],",",
+            final_wer$Aphasia_Control_diff[4],",",
+            final_wer$Aphasia_Control_diff[5],",",
+            final_wer$Aphasia_Control_diff[6],",",
+            "for" ,
+             final_wer$ASR[1], ",",
+             final_wer$ASR[2], ",",
+             final_wer$ASR[3], ",",
+             final_wer$ASR[4], ",",
+             final_wer$ASR[5], ",",
+             final_wer$ASR[6]))
+
+
+## Figure S3
+this_data_main%>% 
+  group_by(Group) %>% 
+  mutate(avg_wer_by_Group = mean(mean_wer),
+         avg_wer_aphasia_dummy = ifelse(Group=="aphasia",mean_wer,0)) %>% 
+  ggplot(aes(x = reorder(ASR, avg_wer_aphasia_dummy), y = mean_wer)) +
+  geom_point(aes( color = Group,shape=Group),size = 6, show.legend = FALSE)+
+  geom_hline(aes(yintercept = avg_wer_by_Group, color = Group), linetype = "dashed",show.legend = FALSE)+
+  geom_text(x = Inf, y =0.16, label = "aphasia", color= "red", 
+            hjust = 1.1, size = 6,show.legend = FALSE) +
+    geom_text(x = Inf, y =0.06, label = "control", color= "blue", 
+            hjust = 1.1, size = 6,show.legend = FALSE) +
+  scale_color_manual(values = c("red","blue"))+
+  scale_shape_manual(values=c(15,16))+
+  scale_x_discrete(labels=c("Rev AI" = "Rev AI", 
+                            "Amazon AWS" = "Amazon\nAWS",
+                            "OpenAI Whisper"="OpenAI\nWhisper",
+                            "Microsoft Azure"="Microsoft\nAzure",
+                            "AssemblyAI"="AssemblyAI",
+                            "Google Chirp"="Google\nChirp"))+
+  ylim(0,0.2)+
+  labs(y = "Average WER")+
+  theme_bw()+
+  theme(axis.text.x = element_text(face = "bold", size = 12),
+        axis.text.y = element_text(face = "bold", size =12),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(face ="bold",size =14))
+
+ggsave(this_filename)
+
+
+# Average across all ASR for aphasia and control 
+main_average_by_Group <- this_data_main%>% 
+  ungroup() %>% 
+  group_by(Group) %>% 
+  summarise(avg_wer_by_Group = mean(mean_wer))
+
+main_average_by_Group_wide <-main_average_by_Group %>% pivot_wider(names_from = Group,values_from = avg_wer_by_Group)
+```
+
+
+
+# Aphasia Type 1
+##Table
+```{r}
+
+this_data <- weighted_avg_wer %>% 
+  filter(weighted_average_group=="aphasia_TypeFluency" ) %>% 
+  mutate(mean_wer =  round(mean_wer,digits = 2),
+         Group=ifelse(Group=="control","Control",Group)) %>% 
+  dplyr::select(ASR,Group,mean_wer) %>% 
+  pivot_wider(values_from =mean_wer,names_from = Group)
+
+weighted_avg_wer %>% 
+  filter(weighted_average_group=="aphasia_TypeFluency" ) %>% 
+  mutate(mean_wer =  round(mean_wer,digits = 2)) %>% group_by(Group) %>% summarise(mean(mean_wer))
+
+# report result between fluent vs nonfluent 
+this_data %>%  summarise(mean(Fluent),mean(`Non-fluent`),mean(Control))
+
+
+```
+
+##Figure 3 
+```{r}
+if (matched==TRUE){
+  this_filename = "./figures/aphasia_type_fluency_matched_weighted.pdf"
+  # these numbers are based on what works on the text position 
+  x_control = 0.09
+  x_fluent = 0.14
+  x_nonfluent = 0.17
+} else{
+  this_filename = "./figures/aphasia_type_fluency_unmatched_weighted.pdf"
+  x_control = 0.10
+  x_fluent = 0.13
+  x_nonfluent = 0.16
+}
+
+this_data2 <-  weighted_avg_wer %>% 
+  filter(weighted_average_group=="aphasia_TypeFluency" ) %>% 
+  mutate(mean_wer =  round(mean_wer,digits = 2),
+         se_wer = round(`Weighted WER SE`,digits = 4),
+         Group=ifelse(Group=="control","Control",Group)) 
+# %>% 
+#   dplyr::select(ASR,Group,mean_wer,se_wer) %>% 
+#   pivot_wider(values_from =mean_wer,names_from = Group)
+
+this_data2 %>%
+  mutate(dummy_mean_wer = ifelse(Group =="Non-fluent",mean_wer,-3)) %>% 
+  ggplot(aes(x = reorder(ASR,dummy_mean_wer), y = mean_wer))+
+  geom_point(aes( color = Group,shape=Group),size=4,show.legend = FALSE)+  
+ annotate("text", x = 6.3, y =x_control, label = "Control", size = 3, color = "#008B45FF", hjust = 0.5, vjust = -1.0,fontface ="bold")+
+  annotate("text", x = 6.3, y =x_fluent, label = "Fluent\n Aphasia", size = 3, color = "#3B4992FF", hjust = 0.5, vjust = -1.5,fontface ="bold")+
+  annotate("text", x =6.25, y =x_nonfluent, label = "Non-Fluent\n Aphasia", size = 3, color = "#EE0000FF",hjust=0.5, vjust = -1.9,fontface="bold")+
+  geom_hline( aes(yintercept =main_average_by_Group_wide$aphasia,linetype="aphasia"),color="#005f73",size=0.7,key_glyph = "path")+
+  geom_hline( aes(yintercept =  main_average_by_Group_wide$Control,linetype = "control"),color="darkgreen",size=1.2,key_glyph = "path")+
+  geom_errorbar(aes(ymin = mean_wer- `Weighted WER SE`, ymax = mean_wer+ `Weighted WER SE`), width = 0.2,show.legend = FALSE) +
+  labs( x= "Word Error Rates",y="ASR")+
+  ylim(0,0.25)+
+  # scale_y_continuous(breaks = c(-0.05,0.05,0.10,0.15,0.20,0.25))+
+  scale_color_manual(values = c(Control="#008B45FF",Fluent = "#3B4992FF",`Non-fluent`="#EE0000FF"))+
+  scale_x_discrete(labels=c("Rev AI" = "Rev AI", 
+                            "Amazon AWS" = "Amazon\nAWS",
+                            "OpenAI Whisper"="OpenAI\nWhisper",
+                            "Microsoft Azure"="Microsoft\nAzure",
+                            "AssemblyAI"="AssemblyAI",
+                            "Google Chirp"="Google\nChirp"))+
+  
+  theme_pubr()+
+  theme(axis.text = element_text(size=12),
+    axis.title = element_text(size=15),
+    legend.position = "inside",
+    legend.text = element_text(face="bold",size=10),
+    legend.title = element_text(face="bold",size=10),
+    legend.position.inside = c(.1, .8),
+    legend.background = element_rect(color = "black"),
+    panel.spacing = unit(1, "lines"),
+    strip.text = element_text(size = 10),
+  axis.title.x =  element_blank(),
+  )+
+    scale_linetype_manual(name = "Group",values=c(aphasia = 2,control=3))
+  
+ggsave(filename = this_filename)
+```
+
+
+
+# Aphasia Type 2 
+##Figure 4
+```{r}
+aphasia_type_table<- read_csv("../../data/aphasia_count_pre_post_matching.csv") %>% mutate(Demographics = ifelse(Demographics=="control","Control",Demographics))
+colnames(aphasia_type_table)[1]<- "Group"
+
+
+
+if (matched==TRUE){
+  this_filename = "./figures/aphasia_type_boston_comparison_matched_weighted.pdf"
+} else{
+  this_filename = "./figures/aphasia_type_boston_comparison_unmatched_weighted.pdf"
+}
+
+
+# this one we shouldnt use matched data probably
+this_data<- weighted_avg_wer %>% filter(weighted_average_group=="aphasiaTypeBoston") %>% left_join(aphasia_type_table,by="Group") %>% 
+  mutate(matching_true= ifelse(matched==TRUE,1,0),
+         n = ifelse(matching_true==1,`# Participants (Post-matching)`,`# Participants (Pre-matching)`))
+this_data$Group <-factor(this_data$Group,levels = c("Control","Anomic","Conduction","Wernicke","Broca","Global")) 
+
+
+
+this_data %>% 
+  ggplot()+
+  geom_point(aes( x= Group, y = mean_wer, color = ASR,shape = ASR,group = ASR),size=3)+
+   geom_line(aes( x= Group, y = mean_wer, color = ASR, group = ASR), linetype = "dashed")+
+    geom_text(aes(x = Group, y =0.01, label = paste0("n=",n), size = 3),show.legend = FALSE) +
+  labs( y= "Word Error Rates")+
+  theme_pubr()+
+  theme(
+    legend.position = "top",
+    panel.spacing = unit(1, "lines"),
+    strip.text = element_text(size = 12))+
+  labs(color = "ASR",shape = "ASR", x=element_blank())+
+  scale_color_aaas()
+
+ggsave(this_filename)
+
+```
+## Average WER for the figure 
+```{r}
+# Average WER across all ASR for each group
+this_data %>% dplyr::select(Group, mean_wer,ASR) %>% 
+  group_by(Group) %>% 
+  summarise(mean_wer = mean(mean_wer)) %>% 
+  mutate(mean_wer = round(mean_wer,digits = 3))
+
+```
+
+## WER average comparison across ASR
+```{r}
+this_data %>% dplyr::select(Group, mean_wer,ASR) %>% 
+  group_by(Group,ASR) %>% 
+  summarise(mean_wer = mean(mean_wer)) %>% 
+  mutate(mean_wer = round(mean_wer,digits = 3)*100)
+```
+
+

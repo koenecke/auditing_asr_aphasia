@@ -1,0 +1,1096 @@
+---
+output: 
+    html_document:
+      theme: united
+      toc:  TRUE 
+      toc_float: TRUE
+      css: style.css
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message = FALSE,include=FALSE}
+#Installs packages if not yet installed
+packages <- c("tidyverse","ggplot2","readxl","correlation","corrplot",
+                      "stringr","cobalt","ggsci","MatchIt","gridExtra","ggstatsplot","stargazer","flextable","knitr","ggpubr","ggsignif","fmsb","lmtest","kableExtra","sandwich","Hmisc")
+
+
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+invisible(lapply(packages,library,character.only=TRUE))
+colors_5_constrast <- c("#0081A7","#00AFB9","#e9d8a6","#FED9B7","#F07167")
+colors_5 <- c("#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51")
+colors <- c("#bb3e03","#ec8c74","#f4a261","#ee9b00","#005f73","#264653")
+colors_4 <-c("#9e2a2b","#e09f3e","#fff3b0","#335c67")
+colors_2 <- c("#BB3E03" ,"#457b9d")
+colors_2_light <- c("#e63946","#a8dadc")
+colors_10 <- c('#f94144','#ca6702','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#4d908e','#577590','#4091c9' ,'#277da1', '#815ac0')
+
+colors_4 <-c("#9e2a2b","#e09f3e","#fff3b0","#335c67")
+
+colors_13 <- c('#f94144','#ca6702','#f8961e','#f9844a','#f9c74f','#90be6d','#43aa8b','#4d908e','#577590','#4091c9' ,'#277da1', '#815ac0',"grey")
+
+```
+
+#Load Data
+```{r message=FALSE}
+
+v1_name <- "Remove fillers"
+v1plus_name <-"Remove fillers and fragments"
+v2_name <- "Remove fillers, fragments,and repeated words"
+v3_name<- "Remove fillers, fragments,repeated words, and repeated phrases"
+all_asr_list<-c("AWS","AssemblyAI","GoogleChirp","GoogleLong","Azure","OpenAI","GoogleTelephony","RevAI","Open AI_Distil")
+
+asr_list<-c("Amazon AWS","AssemblyAI","GoogleChirp","GoogleLong","Azure","OpenAI","GoogleTelephony","RevAI")
+
+wer_data <- read_csv("../../data/Post_Processing_WER_Data.csv")
+
+colnames(wer_data)
+wer_data$ASR <- factor(wer_data$ASR,levels = c("Google Chirp","Microsoft Azure","OpenAI Whisper","Rev AI","AssemblyAI","Amazon AWS"))
+
+```
+
+## Separate versions of WER
+```{r}
+# Edited ground truth with edited asr transcript
+
+df_gt_orig <-  wer_data %>% filter(asr_transcript_version=="orig")
+df_gt_v1plus_v1 <- wer_data %>% filter(groundtruth_version=="RFF",asr_transcript_version=="RFF")
+df_gt_v1_v1 <- wer_data %>%  filter(groundtruth_version=="RF",asr_transcript_version=="RF")
+df_gt_v2_v2 <- wer_data %>%  filter(groundtruth_version=="RFFR",asr_transcript_version=="RFFR")
+df_gt_v3_v3 <- wer_data %>%  filter(groundtruth_version=="RFFRR",asr_transcript_version=="RFFRR")
+
+df_gt_v3_v3 %>% dplyr::select(segment_name,aphasia_TypeFluency) %>% unique() %>%  group_by(aphasia_TypeFluency) %>% count()
+```
+
+# Produce matched subset for all versions 
+```{r include=FALSE}  
+# read in matched segment subset 
+post_matching_segment_data <- read_csv("../../data/matched_segment.csv")
+
+# use the matched subset above to select the WER subset for each standardization approach 
+df_gt_orig_matched<- df_gt_orig %>% right_join(post_matching_segment_data,by="segment_name")
+df_gt_v1_v1_matched <-  df_gt_v1_v1 %>% right_join(post_matching_segment_data,by="segment_name")
+df_gt_v1plus_v1_matched <- df_gt_v1plus_v1 %>% right_join(post_matching_segment_data,by="segment_name")
+df_gt_v2_v2_matched <-  df_gt_v2_v2  %>% right_join(post_matching_segment_data,by="segment_name")
+df_gt_v3_v3_matched <-df_gt_v3_v3 %>% right_join(post_matching_segment_data,by="segment_name")
+
+```
+
+```{r fig.width=8, fig.height=8 }  
+plot_density <- function(df ,variable,legend_type,y_title,y_max,pre_matching){
+  
+  #calculate density
+   df1<- df %>% 
+    dplyr::select(Participant_ID,Group,{{variable}}) %>%
+    unique() %>%
+    group_by({{variable}},Group) %>%
+    count(name = "count") %>%
+    ungroup() %>%
+    group_by(Group) %>%  
+    mutate(total = sum(count)) %>% 
+    mutate(density = count/total)
+
+   #visualize density
+  df1%>% 
+    ggplot(aes(x = {{variable}}, y = density, color= Group))+
+          geom_point(aes(shape = Group),show.legend = legend_type)+
+          geom_line(aes(group = Group),show.legend = legend_type)+
+          theme_classic()+
+          scale_x_discrete(labels=c("HL" = "Hispanic/Latino",
+                              "WH" = "White",
+                              "AA" = "African American",
+                              "AS" = "Asian",
+                              "AI" ="American Indian/Alaska Native",
+                              "NH" ="Native Hawaiian/Pacific Islander",
+                              "MI" = "Mixed",
+                              "OTH"="Other",
+                              "U"="Unavailable",
+                              "F"="Female",
+                              "M"="Male"))+
+    labs(y= pre_matching)+
+    theme(axis.text.x =element_text(angle = 30, hjust = 1),
+          legend.position = "bottom",
+          axis.title.y = if (y_title) { 
+            element_blank() 
+        } else { 
+          element_text()
+        })+
+    ylim(c(0,y_max))
+    
+}
+
+
+```
+
+
+
+```{r}
+all_data<- df_gt_v3_v3 %>% mutate(aphasia_TypeFluency=capitalize(aphasia_TypeFluency))
+matched_data<- df_gt_v3_v3_matched %>%  mutate(aphasia_TypeFluency=capitalize(aphasia_TypeFluency))
+plot_pre_post_density <- function(variable, y_max){
+  p1 <- plot_density(all_data,{{variable}},FALSE,FALSE,y_max,"Pre Matching Density")
+  p11 <-  plot_density(matched_data,{{variable}},TRUE,FALSE,y_max,"Post Matching Density")
+  grid.arrange(p1,p11)
+}
+
+plot_pre_post_density(Race,1)
+plot_pre_post_density(Gender,1)
+plot_pre_post_density(age_group,0.75)
+plot_pre_post_density(edu_levels,1)
+plot_pre_post_density(total_audio_duration,1)
+plot_pre_post_density(word_count_RFFRR,1)
+plot_pre_post_density(Mean_Background_Noise_Levels,1)
+
+```
+
+
+
+###Overview of Snippets and Speakers before and after matching
+```{r echo=FALSE}
+# Function that counts the number of snippets in each category before and after matching
+display_pre_post_matching_counts<- function(pre_matching_df,post_matching_df, variable){
+  t1 <- pre_matching_df %>% 
+    dplyr::select(segment_name,{{variable}}) %>% 
+    unique() %>% 
+    group_by({{variable}}) %>% 
+    count() %>% 
+    mutate(matching = "# Snippets (Pre-matching)")
+  
+  t2 <- post_matching_df %>%
+      dplyr::select(segment_name,{{variable}}) %>% 
+    unique() %>% 
+    group_by({{variable}}) %>% 
+    count() %>% 
+    mutate(matching = "# Snippets (Post-matching)")
+  merge_t1 <- t1 %>% full_join(t2)
+  
+  t11 <- pre_matching_df %>%  dplyr::select(Participant_ID,{{variable}}) %>% unique() %>%  group_by({{variable}}) %>% count() %>% mutate(matching = "# Participants (Pre-matching)")
+
+   t22 <-post_matching_df%>%  dplyr::select(Participant_ID,{{variable}}) %>% unique() %>%  group_by({{variable}}) %>% count() %>% mutate(matching = "# Participants (Post-matching)")
+  merge_t2 <- t11 %>% full_join(t22) 
+  
+  merge_t <- merge_t1%>% rbind(merge_t2) %>% pivot_wider(names_from = matching, values_from = n,values_fill = 0)
+  colnames(merge_t)[1] <- "Demographics"
+  return (merge_t)
+}
+
+```
+
+
+```{r}
+post_matching_count_table<- display_pre_post_matching_counts(all_data,matched_data,is_aphasia) %>% 
+  mutate(Group = ifelse(Demographics ==1,"aphasia","control"),.after="Demographics") %>% 
+  ungroup() %>% dplyr::select(-c(Demographics))
+post_matching_count_table %>% 
+  kbl(caption="Change in Total Number of Snippets after Matching") %>% kable_material(c("striped", "hover","condensed","responsive")) 
+
+```
+
+#Table 4 
+```{r echo=FALSE}
+
+# Here we display the pre and post matching counts for variables Race, Gender, and Aphasia Type.
+race_table <- display_pre_post_matching_counts(all_data,matched_data,race_fac)
+gender_table<- display_pre_post_matching_counts(all_data,matched_data,is_female) %>% mutate(Demographics = ifelse(Demographics ==1,"Female","Male"))
+employ_status_table <- display_pre_post_matching_counts(all_data,matched_data,employ_fac) 
+# %>% mutate(Demographics = ifelse(Demographics=="R","Retired/Not Working","Working"))
+language_table <- display_pre_post_matching_counts(all_data,matched_data,english_firstlang) %>% mutate(Demographics =ifelse(Demographics==1,"English as first language","Other language"))
+edu_status_table <- display_pre_post_matching_counts(all_data,matched_data,edu_levels)
+age_table <- display_pre_post_matching_counts(all_data,matched_data,age_group)
+word_count_RFFRR_table <- display_pre_post_matching_counts(all_data,matched_data,word_count_RFFRR)
+
+aphasia_type_table <- display_pre_post_matching_counts(all_data,matched_data,aphasiaTypeBoston) 
+
+write_csv(aphasia_type_table,"../../data/aphasia_count_pre_post_matching.csv")
+
+aphasia_type_table2 <- display_pre_post_matching_counts(all_data,matched_data,aphasia_TypeFluency)
+
+
+pre_post_matching_counts <- rbind(race_table,
+                                  gender_table,
+                                  language_table,
+                                  edu_status_table,
+                                  age_table)
+
+# demographics
+pre_post_matching_counts %>% 
+  kbl() %>%
+  kable_material(c("striped", "hover","condensed","responsive")) %>% 
+  pack_rows("Race/Ethnicity",1,3) %>% 
+  pack_rows("Gender",4,5) %>% 
+  # pack_rows("Employment Status",6,8) %>% 
+  pack_rows("Spoken Language",6,6) %>% 
+  pack_rows("Education Levels",7,10) %>% 
+  pack_rows("Age",11,17) 
+  
+# aphasia
+aphasia_type_table2 %>% 
+  kbl() %>% 
+  kable_material(c("striped", "hover","condensed","responsive")) 
+```
+
+
+
+
+#Read in Three-way matched subset
+```{r}
+
+three_way_subset_segment <- read_csv("../../data/three_way_matched_subset.csv") %>% select(segment_name)
+three_way_subset <- all_data %>% filter(segment_name %in% three_way_subset_segment$segment_name)
+
+
+# Overview of sample size for each group after three- way matching 
+three_way_subset %>% dplyr::select(aphasia_TypeFluency,segment_name) %>% unique() %>%  group_by(aphasia_TypeFluency) %>% count() %>% kbl()
+```
+
+### Kruskal-wallis tests 
+```{r}
+#for three-way matched subset
+execute_test <- function(df, asr,factor,is_matched){
+
+  if (is_matched ==TRUE){
+    filename =  paste0("./figures/",factor,"_kwtest_fluent_nonfluent_control_matched_",asr,"_",".pdf")
+  }
+  else{
+     filename =  paste0("./figures/",factor,"_kwtest_fluent_nonfluent_control_unmatched_",asr,"_",".pdf")
+  }
+  this_df <- df%>% filter(ASR==asr)
+  plt<-ggbetweenstats(data = this_df, x = {{factor}},y = "WER",xlab = paste0(factor,"--",asr),
+                      type = "nonparametric",
+                 violin.args = list(width = 0, linewidth = 0))
+  print(plt)
+  ggsave(filename =filename, plot =plt, width = 6, height = 4, dpi = 300)
+}
+
+data<- all_data %>% filter(segment_name%in% three_way_subset$segment_name)
+data <- data %>% mutate(aphasia_type = ifelse(is_aphasia==0, "Control",ifelse(is_aphasia==1 & !is.na(aphasia_TypeFluency),aphasia_TypeFluency,"Non-categorized aphasia"))) %>%  filter(!aphasia_type=="Non-categorized aphasia")
+
+factor <- "aphasia_type"
+is_matched <- FALSE
+execute_test(data,"Google Chirp",factor,is_matched)
+execute_test(data,"Amazon AWS",factor,is_matched)
+execute_test(data,"Microsoft Azure",factor,is_matched)
+execute_test(data,"AssemblyAI",factor,is_matched)
+execute_test(data,"OpenAI Whisper",factor,is_matched)
+execute_test(data,"Rev AI",factor,is_matched)
+
+```
+
+```{r}
+this_data <- all_data %>% filter(aphasiaTypeBoston %in% c("Anomic","Conduction","Broca","Wernicke","Global")|is_aphasia==0)
+execute_test(this_data,"Google Chirp","aphasiaTypeBoston",FALSE)
+execute_test(this_data,"Amazon AWS","aphasiaTypeBoston",FALSE)
+execute_test(this_data,"Microsoft Azure","aphasiaTypeBoston",FALSE)
+execute_test(this_data,"AssemblyAI","aphasiaTypeBoston",FALSE)
+execute_test(this_data,"Rev AI","aphasiaTypeBoston",FALSE)
+```
+
+
+
+# Overview of WER across versions
+# Table S2
+```{r}
+
+calculate_overall_wer <- function(df,matching){
+  if (matching ==TRUE){
+    is_matched = "Matched"
+  }
+  else{
+    is_matched = "Unmatched"
+  }
+  
+  new_df <- df %>% 
+    group_by(ASR,Group,asr_transcript_version,groundtruth_version) %>% 
+    summarise(WER_Average =round(mean(WER),digits = 3)) %>% 
+    # mutate(WER_avg_sd = paste(WER_Average," / ",WER_SD)) %>% 
+    # select(-c(WER_Average,WER_SD)) %>% 
+    pivot_wider(names_from = Group,values_from = WER_Average) %>%
+    mutate(Aphasia_vs_Control_ratio = round(aphasia/control,digits=2),
+           Aphasia_Control_diff = round(aphasia-control,digits=2),
+           matching =is_matched) %>% 
+    arrange(-aphasia)
+  return (new_df)
+}
+
+wer_v1_v1<- calculate_overall_wer(df_gt_v1_v1,FALSE)
+wer_v1_v1_matched<- calculate_overall_wer(df_gt_v1_v1_matched,TRUE)
+
+wer_v1plus_v1  <- calculate_overall_wer(df_gt_v1plus_v1,FALSE)
+wer_v1plus_v1_matched <- calculate_overall_wer(df_gt_v1plus_v1_matched,TRUE)
+
+wer_v2_v2 <- calculate_overall_wer(df_gt_v2_v2,FALSE)
+wer_v2_v2_matched <- calculate_overall_wer(df_gt_v2_v2_matched,TRUE)
+
+wer_v3_v3 <- calculate_overall_wer(df_gt_v3_v3, FALSE)
+wer_v3_v3_matched <- calculate_overall_wer(df_gt_v3_v3_matched,TRUE)
+
+unweighted_wer_table <- rbind(wer_v1_v1,wer_v1_v1_matched,
+                   wer_v1plus_v1,wer_v1plus_v1_matched,
+                   wer_v2_v2,wer_v2_v2_matched,
+                   wer_v3_v3,wer_v3_v3_matched) 
+
+print(paste("The average WER on the aphasia group were",
+             wer_v3_v3_matched$aphasia[1],",",
+            wer_v3_v3_matched$aphasia[2],",",
+            wer_v3_v3_matched$aphasia[3],",",
+            wer_v3_v3_matched$aphasia[4],",",
+            wer_v3_v3_matched$aphasia[5],",",
+            wer_v3_v3_matched$aphasia[6],",",
+            "for" ,
+             wer_v3_v3_matched$ASR[1], ",",
+             wer_v3_v3_matched$ASR[2], ",",
+             wer_v3_v3_matched$ASR[3], ",",
+             wer_v3_v3_matched$ASR[4], ",",
+             wer_v3_v3_matched$ASR[5], ",",
+             wer_v3_v3_matched$ASR[6]))
+
+write_csv(unweighted_wer_table,"../../data/unweighted_WER_table.csv")
+
+```
+
+
+## Weighted Average (Results on Standardization Section)
+```{r}
+df1 <- read_csv("../../data/weighted_average_WER_by_group_matched.csv") %>% mutate(Matching = "Matched")
+df2 <- read_csv("../../data/weighted_average_WER_by_group_unmatched.csv") %>% mutate(Matching="Unmatched")
+
+full_df<- rbind(df1,df2) %>% mutate(Group = ifelse(Group=="None","Control",Group),
+                                    ASR = case_when(ASR =="AWS"~"Amazon AWS",
+                         ASR =="GoogleChirp"~"Google Chirp",
+                         ASR =="Whisper"~"OpenAI Whisper",
+                         ASR =="RevAI"~"Rev AI",
+                         ASR =="Azure"~"Microsoft Azure",
+                         ASR =="AssemblyAI"~"AssemblyAI"))
+
+weighted_wer_table <- full_df %>% filter(weighted_average_group=="aphasia_type") %>% 
+  dplyr::select(ASR,Group,`Weighted WER`,Matching) %>% 
+  pivot_wider(names_from = Group,values_from =`Weighted WER`)  %>% 
+  arrange(Matching, -aphasia) %>% 
+  mutate(Aphasia_Control_diff = aphasia-control,
+          Average_Version = "Weighted") %>% 
+  mutate(across(where(is.numeric), round, 2)) 
+```
+
+## Unweighted Table 
+```{r}
+
+unweighted_wer_table <- unweighted_wer_table %>% 
+  filter(asr_transcript_version=="RFFRR") %>% 
+  ungroup() %>% 
+  dplyr::select(-c(asr_transcript_version,groundtruth_version,Aphasia_vs_Control_ratio)) %>% 
+  mutate(across(where(is.numeric), round, 2),
+         Average_Version = "Unweighted") %>% 
+  rename("Matching"="matching")
+
+full_WER_table <- rbind(unweighted_wer_table,weighted_wer_table)
+
+# min -max difference across all versions of average calculation 
+summary(full_WER_table$Aphasia_Control_diff)
+
+full_WER_table %>% filter(Average_Version=="Unweighted") %>% group_by(ASR, Matching) %>% summarise(avg_aphasia_control_diff= mean(Aphasia_Control_diff))
+
+# average aphasia, control by matching and average version 
+full_WER_table  %>% group_by(Average_Version,Matching) %>% summarise(mean(aphasia),mean(control))
+
+full_WER_table %>% filter(Average_Version=="Unweighted" & Matching =="Matched")
+
+
+```
+##Merged table 
+```{r}
+# output full wer table 
+output_full_wer <- full_WER_table %>%
+  mutate(Merged_version = paste(Matching,Average_Version)) %>% select(-c(Matching,Average_Version,Aphasia_Control_diff)) %>% 
+  pivot_longer(cols = c(aphasia,control),names_to = "Group",values_to = "WER") %>% 
+  pivot_wider(names_from = Merged_version, values_from = WER) %>% 
+  select(ASR,
+         Group,
+         `Matched Weighted`,
+         `Unmatched Weighted`,
+         `Matched Unweighted`,
+         `Unmatched Unweighted`)
+output_full_wer
+```
+
+
+
+
+#WER comparison between aphasia and control across ASRs(t-tests)
+```{r}
+library(dplyr)
+library(rstatix)
+asr_list <- unique(all_data$ASR)
+
+t_test_df1 <- data.frame()
+
+for (i in 1:6){
+  test_df <- matched_data %>% filter(ASR==asr_list[i])
+  test<- wilcox.test(WER~is_aphasia, data = test_df,exact=FALSE)
+  effect_size <- wilcox_effsize(WER~is_aphasia, data = test_df)
+  test<- cbind(tidy(test),effect_size)
+  t_test_df1 <- rbind(t_test_df1,test)
+  
+}
+
+t_test_df1 <- t_test_df1 %>% mutate(ASR = asr_list,.before = "statistic",
+                                    Data = "Matched") %>% rename("W"="statistic") 
+
+
+
+t_test_df2 <- data.frame()
+
+for (i in 1:6){
+  test_df <- all_data %>% filter(ASR==asr_list[i])
+  test<- wilcox.test(WER~is_aphasia, data = test_df,exact=FALSE)
+  effect_size <- wilcox_effsize(WER~is_aphasia, data = test_df)
+  test<- cbind(tidy(test),effect_size)
+  t_test_df2 <- rbind(t_test_df2,test)
+}
+
+t_test_df2 <- t_test_df2 %>% mutate(ASR = asr_list,.before = "statistic",
+                                    Data = "Unmatched") %>% rename("W"="statistic")
+
+t_test_full <- rbind(t_test_df1,t_test_df2) %>% 
+  mutate(group1 = "Control",group2="Aphasia") %>% 
+  dplyr::select(-c(method,`.y.`))
+
+t_test_full 
+
+```
+
+
+# Figure 2 difference in WER across difference standardized approaches
+```{r}
+
+merged_data <- rbind (df_gt_orig_matched,
+                      df_gt_v1_v1_matched , 
+                      df_gt_v1plus_v1_matched,
+                      df_gt_v2_v2_matched,
+                      df_gt_v3_v3_matched) %>% 
+  dplyr::select(segment_name,Transcript_Version,asr_transcript_version, WER, ASR,is_aphasia)
+
+merged_unmatched_data <- rbind (df_gt_orig,
+                                df_gt_v1_v1, 
+                                df_gt_v1plus_v1,
+                                df_gt_v2_v2,
+                               df_gt_v3_v3)%>% 
+  dplyr::select(segment_name, Transcript_Version,asr_transcript_version, WER, ASR,is_aphasia)
+
+
+###### Unmatched data
+aphasia_merged_data <- merged_unmatched_data %>% filter(is_aphasia==1)
+control_merged_data <-merged_unmatched_data %>% filter(is_aphasia==0)
+```
+
+# MAPSSWE Test
+```{r}
+
+# Compare difference across all ASR systems for each WER 
+source("./mapsswe_test.R")
+
+save_mapsswe_results <- function(df, is_control){
+  print("Verify if this is the unmatched data...")
+  this_df <-df%>% # change this data for different version 
+  select(segment_name, WER, Transcript_Version, ASR)
+
+  standardization_version <- unique(this_df$Transcript_Version)
+
+  # Initialize an empty list to store results for each ASR system
+    all_results <- list()
+  
+  # Loop through each ASR system and apply the pairwise_mapsswe_test
+  for (version in standardization_version) {
+    # Filter the dataframe for the current ASR system
+    asr_df <- this_df %>% filter(Transcript_Version == version)
+    
+    # Run the pairwise MAPSSWE test for this ASR system
+    result <- pairwise_mapsswe_test(asr_df, numeric_var = "WER", group_var = "ASR")
+    
+    # Store the result with the ASR system name as the key
+    all_results[[version]] <- result
+  }
+  
+  # Combine all results into one df
+  final_results <- bind_rows(all_results, .id = "Version")
+  print(final_results)
+  if (is_control==TRUE){
+    filename = "mapsswe_results_compare_ASR_control_unmatched.csv"
+  }else{
+    filename = "mapsswe_results_compare_ASR_aphasia_unmatched.csv"
+}
+  write_csv(final_results,filename)
+}
+
+save_mapsswe_results(control_merged_data,is_control = TRUE)
+save_mapsswe_results(aphasia_merged_data,is_control = FALSE)
+
+```
+
+# Figure 5
+```{r}
+generate_groundtruth_diff_plot <- function(data,max_limit,max_y_label){
+  label <- c("Rev AI","Google\nChirp","Amazon\nAWS","OpenAI\nWhisper","Microsoft\nAzure","AssemblyAI")
+  my_comparisons<- list(c("Original (O)",
+                        "Remove fillers (RF)"),
+                      c("Remove fillers (RF)", 
+                      "Remove fillers and fragments (RFF)" ),
+                     c("Remove fillers and fragments (RFF)",
+                       "Remove fillers, fragments,and repeated words (RFFR)"),
+                     c("Remove fillers, fragments,and repeated words (RFFR)",
+                       "Remove fillers, fragments,repeated words, and repeated phrases (RFFRR)"))
+         
+  data$ASR <- factor(data$ASR, levels = c("Rev AI","Google Chirp","OpenAI Whisper","Amazon AWS","Microsoft Azure","AssemblyAI"))
+  
+  data <- data %>% 
+    mutate(Version =case_when(Transcript_Version=="Original"~"Original (O)",
+                              Transcript_Version=="Remove fillers"~"Remove fillers (RF)",
+                              Transcript_Version=="Remove fillers and fragments"~"Remove fillers and fragments (RFF)",
+                              Transcript_Version== "Remove fillers, fragments,and repeated words"~ "Remove fillers, fragments,and repeated words (RFFR)",
+                              Transcript_Version=="Remove fillers, fragments,repeated words, and repeated phrases"~"Remove fillers, fragments,repeated words, and repeated phrases (RFFRR)") ) 
+
+  asterisks_y_label <- rep(c(max_y_label * 1,
+                         max_y_label * 0.9,
+                         max_y_label * 0.8,
+                         max_y_label *0.7),6)
+  # data <- data %>% filter(ASR == "Google Chirp" |ASR =="Rev AI")
+  ggbarplot(data , x= "Version",y="WER",
+            add = c("mean_se"),
+            fill = "Version", palette = colors,
+            facet.by = "ASR",
+            position = position_dodge(0.8)
+  )+
+    scale_x_discrete(labels=c("Original (O)"="O",
+                              "Remove fillers (RF)" = "RF",
+                              "Remove fillers and fragments (RFF)"= "RFF",
+                              "Remove fillers, fragments,and repeated words (RFFR)"="RFFR",
+                              "Remove fillers, fragments,repeated words, and repeated phrases (RFFRR)"="RFFRR")
+    )+
+    scale_fill_discrete(labels=c(
+      "Remove fillers, fragments,and repeated words (RFFR)"="Remove fillers, fragments,\nand repeated words (RFFR)",
+      "Remove fillers, fragments,repeated words, and repeated phrases (RFFRR)"=  "Remove fillers, fragments,\nrepeated words, and \nrepeated phrases (RFFRR)"),type = colors_5)+
+    
+    rotate_x_text(20)+
+    theme(legend.position = "bottom",
+          axis.title.x = element_blank(),
+          legend.direction = "horizontal",
+          legend.text = element_text(size=9),
+          legend.title.position = "top")+
+    
+    labs(fill = "Standardization Approach")+
+    coord_cartesian(ylim = c(0,max_limit))+
+    stat_compare_means(
+      comparison = my_comparisons,
+                       method = "wilcox.test",
+                       aes(label = after_stat(p.signif)),
+                       label.y= asterisks_y_label,
+                       tip.length =0.001,
+                       paired = TRUE, #determines whether it should be a paired test
+                       hide.ns = TRUE)+
+    guides(fill = guide_legend(ncol = 3,byrow=TRUE))+
+    scale_y_continuous(labels = c(0,0.25,0.5,0.75,1),breaks = c(0,0.25,0.5,0.75,1))
+}
+
+#save plot for aphasia
+generate_groundtruth_diff_plot(aphasia_merged_data,max_limit=1.2,max_y_label = -0.34)
+ggsave("./figures/groundtruth_comparison_aphasia_unmatched_full.pdf")
+```
+
+
+#Figure S6
+```{r}
+#save plot for control
+generate_groundtruth_diff_plot(control_merged_data,max_limit = 0.6,max_y_label = 0.4)
+ggsave("./figures/groundtruth_comparison_control_unmatched_full.pdf")
+```
+# Table S4
+```{r}
+# Average WER across ASR and Standardization version 
+avg_df1 <- aphasia_merged_data %>% group_by(Transcript_Version,ASR) %>% summarise(avg_wer = round(mean(WER),digits = 2) )%>%
+  pivot_wider(names_from = Transcript_Version,values_from = avg_wer) %>% mutate(Group = "Aphasia")
+
+avg_df2 <-control_merged_data %>% group_by(Transcript_Version,ASR) %>% summarise(avg_wer = round(mean(WER),digits = 2) )%>%
+  pivot_wider(names_from = Transcript_Version,values_from = avg_wer)%>% mutate(Group = "Control")
+avg_df <- rbind(avg_df1,avg_df2)
+avg_df
+```
+
+
+# Figure 2 test result (table)
+```{r}
+# Get a list of unique ASR systems in the data
+
+run_kruskal_wallis_test<-function(df){
+  results_df <- data.frame(
+  ASR = character(),
+  statistic= numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+  unique_asrs <- unique(df$ASR)
+  for (asr in unique_asrs) {
+    asr_data <- subset(df, ASR ==asr)
+    test_result <- kruskal.test(WER ~ Transcript_Version, data = asr_data)
+    alpha<-0.05
+    significance <- ifelse(test_result$p.value < alpha, "Significant", "Not Significant")
+    results_df <- rbind(results_df, data.frame(
+        ASR = asr,
+        statistic =test_result$statistic,
+        p_value = test_result$p.value
+        # Significance = significance
+      ))
+    print(paste("Current ASR",asr))
+    print(pairwise_wilcox_test(WER~ Transcript_Version, data = asr_data,p.adjust.method = "holm",paired=TRUE))
+  }
+  return(results_df)
+}
+# confirmed test results as Figure 2
+kw_results_df_aphasia <-run_kruskal_wallis_test(aphasia_merged_data) %>% rename("p_value(aphasia)" ="p_value","statistic(aphasia)"="statistic")
+kw_results_df_control <-run_kruskal_wallis_test(control_merged_data)%>% rename("p_value(control)" ="p_value","statistic(control)"="statistic")
+kw_results_df<- kw_results_df_aphasia %>% left_join(kw_results_df_control)
+options(scipen = 0)
+
+
+
+
+
+```
+
+```{r}
+run_wilcox_test <- function(df){
+# Initialize an empty data frame to store results
+wilcox_results_df <- data.frame(
+  ASR = character(),
+  Version1 = numeric(),
+  Version2 = numeric(),
+  p_value = numeric(),
+  stringsAsFactors = FALSE
+)
+  unique_asrs <- unique(df$ASR)
+# Loop over each ASR system
+for (asr in unique_asrs) {
+  # asr="Google Chirp"
+
+  # Subset data for the current ASR system
+  asr_data <- subset(df, ASR ==asr)
+  
+  # Define the version pairs we want to compare
+  version_pairs <- list(c("Original",
+                        "Remove fillers"),
+                      c("Remove fillers", 
+                      "Remove fillers and fragments" ),
+                     c("Remove fillers and fragments",
+                       "Remove fillers, fragments,and repeated words"),
+                     c("Remove fillers, fragments,and repeated words",
+                       "Remove fillers, fragments,repeated words, and repeated phrases"),
+                     c("Remove fillers (RF)",  "Remove fillers, fragments,repeated words, and repeated phrases"))
+  
+  # Loop over each specified version pair
+  for (i in  1:(length(unique(asr_data$Transcript_Version)) - 1)) {
+    pair <- version_pairs[[i]]
+    version1 <- pair[1]
+    version2 <- pair[2]
+    
+    # Subset data for each version
+    wer1 <- asr_data$WER[asr_data$Transcript_Version== version1]
+    wer2 <- asr_data$WER[asr_data$Transcript_Version == version2]
+    
+
+    # Conduct the Wilcoxon paired test
+    test_result <- wilcox.test(wer1, wer2, 
+                               paired = TRUE 
+                               )
+    # test significance
+    alpha <- 0.05
+    significance <- ifelse(test_result$p.value < alpha, "Significant", "Not Significant")
+   wilcox_results_df <- rbind(wilcox_results_df, data.frame(
+        ASR = asr,
+        Version1 = version1,
+        Version2 = version2,
+        p_value = test_result$p.value,
+        Significance = significance
+      ))
+  }
+}
+  return(wilcox_results_df)
+}
+wilcox_results_df_aphasia <- run_wilcox_test(aphasia_merged_data) %>% rename("p_value(aphasia)"="p_value","significance(aphasia)"="Significance")
+wilcox_results_df_control <- run_wilcox_test(control_merged_data) %>% rename("p_value(control)"="p_value","significance(control)"="Significance")
+
+wilcox_results_df<- wilcox_results_df_aphasia %>% left_join(wilcox_results_df_control)
+wilcox_results_df
+```
+
+
+
+
+
+
+
+
+
+
+# Table 2 Regression 
+## Regression-WER
+```{r}
+all_data$ASR<- factor(all_data$ASR,levels = c("Rev AI","Google Chirp","Microsoft Azure","OpenAI Whisper","AssemblyAI","Amazon AWS"))
+matched_data$ASR<- factor(matched_data$ASR,levels = c("Rev AI","Google Chirp","Microsoft Azure","OpenAI Whisper","AssemblyAI","Amazon AWS"))
+
+
+lm_v3_v3_unmatched <- lm(WER~ is_female + is_aphasia + age +I(age^2)+ edu_levels  +is_OTH+ is_AA + Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,all_data)
+
+
+
+# Clustered regression for unmatched data
+vcov_matrix <- vcovHC(lm_v3_v3_unmatched)
+cl <- coeftest(lm_v3_v3_unmatched, cluster = ~Participant_ID,vcov. = vcov_matrix)
+
+stargazer(cl,single.row = TRUE,
+          dep.var.labels = "WER",
+          covariate.labels = c("Gender (Female)",
+                               "Aphasia",
+                               "Age",
+                               "Age 2",
+                               "2-year College or dropped Out of 4-year College",
+                               "4-year college",
+                               "Post-grad Degree",
+                               "Race (Other)",
+                               "Race (African American)",
+                               "Mean Background Noise (Audio)",
+                               "Word Count",
+                               "Total Audio Duration",
+                               "Non-vocal Percentage of Audio Duration",
+                               "ASR (Google Chirp)",
+                               "ASR (Microsoft Azure)",
+                               "ASR (OpenAI Whisper)",
+                               "ASR (AssemblyAI)",
+                               "ASR (Amazon AWS)"),
+          no.space = TRUE,
+          align = TRUE,
+          type="text")
+
+# library(xtable)
+# library(texreg)
+# tr <- createTexreg(
+#   coef.names = rownames(cl),
+#   coef = cl[, 1],
+#   se = cl[, 2],
+#   pvalues = round(cl[, 4],digits=3)
+# )
+# screenreg(tr,single.row = TRUE)
+
+
+```
+
+
+
+## Regression-Hallucination
+```{r}
+
+# count of hallucination
+all_data %>% dplyr::select(segment_name,is_aphasia,Whisper_hallucination) %>% unique() %>% group_by(is_aphasia,Whisper_hallucination) %>% count()
+
+hallucination_lm <- glm(Whisper_hallucination~ is_aphasia+age+ I(age^2)+is_female+ edu_levels+is_OTH+is_AA+Mean_Background_Noise+word_count_RFFRR+total_audio_duration+non_vocal_percentage, data= all_data,family = "binomial")
+
+stargazer(hallucination_lm,type="text")
+
+# print clustered regression for matched data
+vcov_matrix <- vcovHC(hallucination_lm, type = "HC3")
+this_cl <- coeftest(hallucination_lm, cluster = ~Participant_ID,vcov. = vcov_matrix)
+
+
+# Merge both regression into one table
+stargazer(cl,this_cl,
+          single.row = TRUE,column.labels = c("WER","Hallucination"),
+
+          covariate.labels = c("Gender (Female)",
+                               "Aphasia",
+                               "Age",
+                               "Age 2",
+                               "2-year College or dropped Out of 4-year College",
+                               "4-year college",
+                               "Post-grad Degree",
+                               "Race (Other)",
+                               "Race (African American)",
+                               "Mean Background Noise (Audio)",
+                               "Word Count",
+                               "Total Audio Duration",
+                               "Non-vocal Percentage of Audio Duration",
+                               "ASR (Google Chirp)",
+                               "ASR (Microsoft Azure)",
+                               "ASR (OpenAI Whisper)",
+                               "ASR (AssemblyAI)",
+                               "ASR (Amazon AWS)"),
+          type="text")
+
+```
+
+
+#Table S5 Matched data
+```{r}
+lm_v3_v3_matched <- lm(WER~ is_female + is_aphasia + age + I(age^2)+edu_levels+is_OTH+ is_AA +  Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,matched_data)
+# stargazer(lm_v3_v3_unmatched,lm_v3_v3_matched, type = "text",column.labels = c("Unmatched (RFFRR)","Matched (RFFRR)"), title = "Linear Regression Results", align = TRUE,digits = 2,out = "html")
+
+
+#  Clustered regression for matched data
+vcov_matrix <- vcovHC(lm_v3_v3_matched)
+cl <- coeftest(lm_v3_v3_matched, cluster = ~Participant_ID,vcov. = vcov_matrix)
+
+stargazer(cl,single.row = TRUE,
+          dep.var.labels = "WER",
+          covariate.labels = c("Gender (Female)",
+                               "Aphasia",
+                               "Age",
+                               "Age 2",
+                               "2-year College or dropped Out of 4-year College",
+                               "4-year college",
+                               "Post-grad Degree",
+                               "Race (Other)",
+                               "Race (African American)",
+                               "Mean Background Noise (Audio)",
+                               "Word Count",
+                               "Total Audio Duration",
+                               "Non-vocal Percentage of Audio Duration",
+                               "ASR (Google Chirp)",
+                               "ASR (Microsoft Azure)",
+                               "ASR (OpenAI Whisper)",
+                               "ASR (AssemblyAI)",
+                               "ASR (Amazon AWS)"),
+          no.space = TRUE,
+          align = TRUE,
+          type="text")
+
+library(xtable)
+library(texreg)
+tr <- createTexreg(
+  coef.names = rownames(cl),
+  coef = cl[, 1],
+  se = cl[, 2],
+  pvalues = round(cl[, 4],digits=3)
+)
+screenreg(tr,single.row = TRUE)
+
+```
+
+#Table S6 Probit Model
+```{r}
+glm_v3_v3_matched <- glm(WER~ is_female + is_aphasia + age + I(age^2)+edu_levels+is_OTH+ is_AA +  Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,matched_data%>% filter(WER<=1),family = binomial(link = "probit"))
+
+# using the matched dataset 
+cl<- coeftest(glm_v3_v3_matched, vcov. = vcovHC, cluster = ~Participant_ID)
+
+stargazer(cl,single.row = TRUE,type="text")
+```
+
+
+#Table S7 (fluent vs nonfluent vs control)
+## Regression-WER
+```{r}
+
+
+# unmatched
+lm_unmatched <- lm(WER~ aphasia_TypeFluency + 
+                      is_female +age +I(age^2)+ edu_levels  +is_OTH+ is_AA + Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,all_data)
+
+# matched
+lm_matched <- lm(WER~aphasia_TypeFluency + is_female + age + I(age^2)+edu_levels+is_OTH+ is_AA +  Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,matched_data)
+
+# check html
+stargazer(lm_matched, type = "text",column.labels = c("Matched (RFFRR)"), title = "Linear Regression Results", align = TRUE,digits = 2,out = "html")
+
+# clustered regression using unmatched data
+vcov_matrix <- vcovHC(lm_unmatched)
+cl <- coeftest(lm_unmatched, cluster = ~Participant_ID,vcov. = vcov_matrix)
+
+# cl
+# tr <- createTexreg(
+#   coef.names = rownames(cl),
+#   coef = cl[, 1],
+#   se = cl[, 2],
+#   pvalues = round(cl[, 4],digits=3)
+# )
+# screenreg(tr,single.row = TRUE)
+
+```
+
+##Regression-Hallucination 
+```{r}
+hallucination_lm <- glm(Whisper_hallucination~ aphasia_TypeFluency+age+ I(age^2)+is_female+ edu_levels+is_OTH+is_AA+Mean_Background_Noise+word_count_RFFRR+total_audio_duration+non_vocal_percentage, data= all_data,family = "binomial")
+stargazer(hallucination_lm,type="text")
+# print clustered regression for matched data
+vcov_matrix <- vcovHC(hallucination_lm, type = "HC3")
+this_cl <- coeftest(hallucination_lm, cluster = ~Participant_ID,vcov. = vcov_matrix)
+
+```
+
+```{r}
+stargazer(cl,this_cl,
+          single.row = TRUE,column.labels = c("WER","Hallucination"),
+          covariate.labels = c("Fluent Aphasia",
+                               "Non-fluent Aphasia",
+                               "Gender (Female)",
+                               "Age",
+                               "Age 2",
+                               "2-year College or dropped Out of 4-year College",
+                               "4-year college",
+                               "Post-grad Degree",
+                               "Race (Other)",
+                               "Race (African American)",
+                               "Mean Background Noise (Audio)",
+                               "Word Count",
+                               "Total Audio Duration",
+                               "Non-vocal Percentage of Audio Duration",
+                               "ASR (Google Chirp)",
+                               "ASR (Microsoft Azure)",
+                               "ASR (OpenAI Whisper)",
+                               "ASR (AssemblyAI)",
+                               "ASR (Amazon AWS)"),
+          type="text")
+
+
+```
+# Table S8 (Global vs...)
+## Regression-WER
+```{r}
+this_df <- all_data %>% filter(aphasiaTypeBoston %in% c("control","Anomic","Conduction","Wernicke","Broca","Global") ) 
+
+
+this_df$aphasiaTypeBoston <-factor(this_df$aphasiaTypeBoston,levels = c("control","Anomic","Conduction","Wernicke","Broca","Global"))
+this_df %>% group_by(aphasiaTypeBoston) %>% count()
+# unmatched
+lm_unmatched <- lm(WER~ aphasiaTypeBoston + 
+                      is_female +age +I(age^2)+ edu_levels  +is_OTH+ is_AA + Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,
+                   this_df)
+
+# check html
+stargazer(lm_unmatched, type = "text",column.labels = c("Matched (RFFRR)"), title = "Linear Regression Results", align = TRUE,digits = 2,out = "html")
+
+# clustered regression 
+vcov_matrix <- vcovHC(lm_unmatched)
+cl <- coeftest(lm_unmatched, cluster = ~Participant_ID,vcov. = vcov_matrix)
+cl
+
+# tr <- createTexreg(
+#   coef.names = rownames(cl),
+#   coef = cl[, 1],
+#   se = cl[, 2],
+#   pvalues = round(cl[, 4],digits=3)
+# )
+# screenreg(tr,single.row = TRUE)
+```
+
+
+## Regression-Hallucination
+```{r}
+this_df <- all_data %>% filter(aphasiaTypeBoston %in%c("control","Anomic","Conduction","Wernicke","Broca","Global"))
+
+this_df$aphasiaTypeBoston<- factor(this_df$aphasiaTypeBoston,levels = c("control","Anomic","Conduction","Wernicke","Broca","Global"))
+this_df%>% group_by(aphasiaTypeBoston) %>% count()
+
+hallucination_lm <- glm(Whisper_hallucination~ aphasiaTypeBoston+age+ I(age^2)+is_female+ edu_levels+is_OTH+is_AA+Mean_Background_Noise+word_count_RFFRR+total_audio_duration+non_vocal_percentage, data= this_df,family = "binomial")
+stargazer(hallucination_lm,type="text")
+# print clustered regression for matched data
+vcov_matrix <- vcovHC(hallucination_lm, type = "HC3")
+this_cl <- coeftest(hallucination_lm, cluster = ~Participant_ID,vcov. = vcov_matrix)
+this_cl
+```
+
+```{r}
+stargazer(cl,this_cl,
+          single.row = TRUE,column.labels = c("WER","Hallucination"),
+          covariate.labels = c("Aphasia (Anomic)",
+                               "Aphasia (Conduction)",
+                               "Aphasia (Wernicke)",
+                               "Aphasia (Broca)",
+                               "Aphasia (Global)",
+                               "Gender (Female)",
+                               "Age",
+                               "Age 2",
+                               "2-year College or dropped Out of 4-year College",
+                               "4-year college",
+                               "Post-grad Degree",
+                               "Race (Other)",
+                               "Race (African American)",
+                               "Mean Background Noise (Audio)",
+                               "Word Count",
+                               "Total Audio Duration",
+                               "Non-vocal Percentage of Audio Duration",
+                               "ASR (Google Chirp)",
+                               "ASR (Microsoft Azure)",
+                               "ASR (OpenAI Whisper)",
+                               "ASR (AssemblyAI)",
+                               "ASR (Amazon AWS)"),
+          type="text")
+
+```
+
+#Figure: WER Breakdown
+```{r}
+# confirm count of snippets 
+all_data %>% select(segment_name,aphasia_TypeFluency) %>% unique() %>%  group_by(aphasia_TypeFluency) %>% count()
+
+# WER ~ Gender X ASR X Aphasia type (fluent vs nonfluent vs control)
+ggbarplot(all_data %>% filter(!is.na(aphasia_TypeFluency)), x= "aphasia_TypeFluency",y="WER",
+          add = c("mean_se"),
+          fill = "Gender", 
+          color="Gender",
+          facet.by = "ASR",
+          position = position_dodge(0.8),
+          # lab.col="white",
+          lab.pos = "in",
+          palette = colors_2_light,
+          # ylim= c(0,1.0)
+          )+
+  labs(x="")+
+  rotate_x_text(angle=15)
+ggsave("./figures/WER_average_gender_unmatched_unweighted.pdf")
+
+
+
+
+# WER ~ Race X ASR X Aphasia type (fluent vs nonfluent vs control)
+
+# check count 
+all_data %>% select(Participant_ID,aphasia_TypeFluency,Race) %>% unique() %>% group_by(aphasia_TypeFluency,Race) %>% count() %>% pivot_wider(values_from = n,names_from = Race)
+this_data<- all_data %>% mutate(Race = case_when(Race=="AS"~"Asian",
+                                                 Race == "HL"~"Hispanic and Latino",
+                                                 Race =="WH"~"White",
+                                                 Race =="AA"~"African American",
+                                                 Race== "OTH"~"Other"))
+this_data$Race<- factor(this_data$Race,levels = c("Asian","Hispanic and Latino","White","African American","Other"))
+
+ggbarplot(this_data %>% filter(!is.na(aphasia_TypeFluency)), x= "aphasia_TypeFluency",y="WER",
+          add = c("mean_se"),
+          fill = "Race", 
+          color="Race",
+          facet.by = "ASR",
+          position = position_dodge(0.8),
+          # lab.col="white",
+          lab.pos = "in",
+          palette = colors_5,
+          alpha=0.9,
+          # ylim= c(0,1.0)
+          )+
+  labs(x="")+
+  rotate_x_text(angle=15)
+ggsave("./figures/WER_average_race_unmatched_unweighted.pdf")
+
+
+
+```
+# counts 
+```{r}
+matched_data %>% select(segment_name,aphasiaTypeBoston,aphasia_TypeFluency) %>% unique() %>% group_by(aphasiaTypeBoston) %>% count()
+
+matched_data %>% group_by(aphasiaTypeBoston) %>% summarise(mean(WER))
+```
+
+
+
+
+
