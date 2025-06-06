@@ -30,7 +30,7 @@ def main():
         results = process_directory(directory, group)
         all_results.extend(results)
 
-    with open('volume_levels.csv', 'w', newline='') as file:
+    with open('../../data/Demographic/volume_levels.csv', 'w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['filename', 'group', 'volume_level'])
         writer.writerows(all_results)
