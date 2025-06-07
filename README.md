@@ -33,7 +33,7 @@ output = "[DATE]_WER_Results.csv"
 ```
 ### Data Processing and Analysis for WER data
 Data processing in the following sequence:
-- Utilize the [data_merge.rmd](https://github.com/koenecke/auditing_asr_aphasia/blob/main/src/Analysis/data_merge.Rmd) to merge transcripts, ground truth, WER results, and information related to audio measure and demographic information. 
+- Utilize the [data_merge.rmd](https://github.com/koenecke/auditing_asr_aphasia/blob/main/src/Analysis/data_merge.Rmd) to merge transcripts, ground truth, WER results, and information related to audio measure and demographic information. The zipped version of this data is stored [here](https://github.com/koenecke/auditing_asr_aphasia/blob/main/data/Merged_WER_data_raw.csv.zip) since the original data file is too big. 
 ```
 output = "Merged_WER_data_raw.csv"
 ```
