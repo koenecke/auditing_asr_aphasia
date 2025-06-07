@@ -136,9 +136,9 @@ def main(matched=True):
 
     # set output filename based on matching
     if MATCHED:
-        output_filepath = '../data/weighted_average_WER_by_group_matched.csv'
+        output_filepath = './../data/weighted_average_WER_by_group_matched.csv'
     else:
-        output_filepath = '../data/weighted_average_WER_by_group_unmatched.csv'
+        output_filepath = './../data/weighted_average_WER_by_group_unmatched.csv'
 
 
     # matched on aphasia vs control 
