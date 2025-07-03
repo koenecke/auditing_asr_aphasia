@@ -39,7 +39,7 @@ weighted_wer_table <- full_df %>% filter(weighted_average_group=="aphasia_type")
 # Set dataset 
 ```{r}
 # change this based on which dataset to use
-matched <-TRUE
+matched <-FALSE
 
 # set dataset based on matching or not
 if (matched){
@@ -204,7 +204,7 @@ this_data2 %>%
   geom_hline( aes(yintercept =main_average_by_Group_wide$aphasia,linetype="aphasia"),color="#005f73",size=0.7,key_glyph = "path")+
   geom_hline( aes(yintercept =  main_average_by_Group_wide$Control,linetype = "control"),color="darkgreen",size=1.2,key_glyph = "path")+
   geom_errorbar(aes(ymin = mean_wer- `Weighted WER SE`, ymax = mean_wer+ `Weighted WER SE`), width = 0.2,show.legend = FALSE) +
-  labs( x= "Word Error Rates",y="ASR")+
+  labs( x= "ASR",y="WER")+
   ylim(0,0.25)+
   # scale_y_continuous(breaks = c(-0.05,0.05,0.10,0.15,0.20,0.25))+
   scale_color_manual(values = c(Control="#008B45FF",Fluent = "#3B4992FF",`Non-fluent`="#EE0000FF"))+
@@ -217,11 +217,11 @@ this_data2 %>%
   
   theme_pubr()+
   theme(axis.text = element_text(size=12),
-    axis.title = element_text(size=15),
+    axis.title = element_text(size=15,face ="bold",),
     legend.position = "inside",
     legend.text = element_text(face="bold",size=10),
     legend.title = element_text(face="bold",size=10),
-    legend.position.inside = c(.1, .8),
+    legend.position.inside = c(.1, .85),
     legend.background = element_rect(color = "black"),
     panel.spacing = unit(1, "lines"),
     strip.text = element_text(size = 10),
@@ -265,6 +265,7 @@ this_data %>%
   labs( y= "Word Error Rates")+
   theme_pubr()+
   theme(
+    axis.title=element_text(face ="bold",size=15),
     legend.position = "top",
     panel.spacing = unit(1, "lines"),
     strip.text = element_text(size = 12))+
