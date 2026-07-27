@@ -493,6 +493,8 @@ control_merged_data <-merged_unmatched_data %>% filter(is_aphasia==0)
 
 # Compare difference across all ASR systems for each WER 
 source("./mapsswe_test.R")
+# Compare difference across all ASR systems for each WER 
+source("./mapsswe_test.R")
 
 save_mapsswe_results <- function(df, is_control){
   print("Verify if this is the unmatched data...")
@@ -510,7 +512,7 @@ save_mapsswe_results <- function(df, is_control){
     asr_df <- this_df %>% filter(Transcript_Version == version)
     
     # Run the pairwise MAPSSWE test for this ASR system
-    result <- pairwise_mapsswe_test(asr_df, numeric_var = "WER", group_var = "ASR")
+    result <- pairwise_mapsswe_test(asr_df, numeric_var = "WER", group_var = "ASR",all_groups=  c("Google Chirp","Microsoft Azure","OpenAI Whisper","Rev AI","AssemblyAI","Amazon AWS"))
     
     # Store the result with the ASR system name as the key
     all_results[[version]] <- result
@@ -525,11 +527,23 @@ save_mapsswe_results <- function(df, is_control){
     filename = "mapsswe_results_compare_ASR_aphasia_unmatched.csv"
 }
   write_csv(final_results,filename)
+  return(final_results)
 }
 
-save_mapsswe_results(control_merged_data,is_control = TRUE)
-save_mapsswe_results(aphasia_merged_data,is_control = FALSE)
+mapsswe_df <-save_mapsswe_results(control_merged_data,is_control = TRUE)
 
+mapsswe_df<-save_mapsswe_results(aphasia_merged_data,is_control = FALSE)
+
+
+
+mapsswe_df %>%
+  mutate( star = ifelse(P_value_Two_Tail<0.05,"*",
+                        ifelse(P_value_Two_Tail<0.01,"**",
+                               ifelse(P_value_Two_Tail<0.001,"***","n.s.")))) %>% 
+  mutate( Stat = paste0(round(Mean_Difference,digits = 2),"& ",round(W_Statistic,digits = 2),star),
+         ) %>% 
+  dplyr::select(Comparison,Version,Stat) %>% 
+  pivot_wider(names_from = Version,values_from =Stat) %>% kable(format = "latex")
 ```
 
 # Figure 5
@@ -839,6 +853,7 @@ lm_v3_v3_matched <- lm(WER~ is_female + is_aphasia + age + I(age^2)+edu_levels+i
 
 #  Clustered regression for matched data
 vcov_matrix <- vcovHC(lm_v3_v3_matched)
+clustered_se <- sqrt(diag(vcov_matrix))
 cl <- coeftest(lm_v3_v3_matched, cluster = ~Participant_ID,vcov. = vcov_matrix)
 
 stargazer(cl,single.row = TRUE,
@@ -877,6 +892,46 @@ screenreg(tr,single.row = TRUE)
 
 ```
 
+
+## Regression-WER-Demographic-only
+```{r}
+
+lm_v3_v3_matched2<- lm(WER~ is_female + is_aphasia + age +I(age^2)+ edu_levels  +is_OTH+ is_AA +ASR,matched_data)
+
+
+
+# Clustered regression for unmatched data
+vcov_matrix2 <- vcovHC(lm_v3_v3_matched2)
+clustered_se2 <- sqrt(diag(vcov_matrix2))
+cl2 <- coeftest(lm_v3_v3_matched2, cluster = ~Participant_ID,vcov. = vcov_matrix2)
+
+
+
+stargazer(lm_v3_v3_matched2,lm_v3_v3_matched,single.row = TRUE,
+          dep.var.labels = "WER",
+          se=list(clustered_se2,clustered_se),
+          covariate.labels = c("Gender (Female)",
+                               "Aphasia",
+                               "Age",
+                               "Age 2",
+                               "2-year College or dropped Out of 4-year College",
+                               "4-year college",
+                               "Post-grad Degree",
+                               "Race (Other)",
+                               "Race (African American)",
+                               "Mean Background Noise (Audio)",
+                               "Word Count",
+                               "Total Audio Duration",
+                               "Non-vocal Percentage of Audio Duration",
+                               "ASR (Google Chirp)",
+                               "ASR (Microsoft Azure)",
+                               "ASR (OpenAI Whisper)",
+                               "ASR (AssemblyAI)",
+                               "ASR (Amazon AWS)"),
+          no.space = TRUE,
+          align = TRUE,
+          type="text")
+```
 #Table S6 Probit Model
 ```{r}
 glm_v3_v3_matched <- glm(WER~ is_female + is_aphasia + age + I(age^2)+edu_levels+is_OTH+ is_AA +  Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR,matched_data%>% filter(WER<=1),family = binomial(link = "probit"))
@@ -1027,6 +1082,20 @@ stargazer(cl,this_cl,
                                "ASR (Amazon AWS)"),
           type="text")
 
+```
+
+
+# Table S12  Mixed effects model
+```{r}
+lmer_v3_v3_unmatched1 <- lmer(WER~ is_female + is_aphasia + age + I(age^2)+edu_levels  +is_OTH+ is_AA + Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR+(1|Participant_ID)+(1|segment_name),all_data)
+lmer_v3_v3_unmatched2 <- lmer(WER~ aphasia_TypeFluency +is_female +age +I(age^2)+ edu_levels  +is_OTH+ is_AA + Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR+(1|Participant_ID)+(1|segment_name),all_data)
+
+this_df <- all_data %>% filter(aphasiaTypeBoston %in% c("control","Anomic","Conduction","Wernicke","Broca","Global") ) 
+
+this_df$aphasiaTypeBoston <-factor(this_df$aphasiaTypeBoston,levels = c("control","Anomic","Conduction","Wernicke","Broca","Global"))
+lmer_v3_v3_unmatched3 <- lmer(WER~ aphasiaTypeBoston +is_female +age +I(age^2)+ edu_levels  +is_OTH+ is_AA + Mean_Background_Noise +word_count_RFFRR+total_audio_duration+non_vocal_percentage+ASR+(1|Participant_ID)+(1|segment_name),this_df)
+
+tab_model(lmer_v3_v3_unmatched1,lmer_v3_v3_unmatched2,lmer_v3_v3_unmatched3,p.style = "star",show.se =TRUE,show.ci = FALSE,collapse.se = TRUE)
 ```
 
 #Figure: WER Breakdown
